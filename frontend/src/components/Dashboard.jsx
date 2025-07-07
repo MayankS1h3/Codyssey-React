@@ -5,26 +5,52 @@ function Dashboard({ token }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchStats = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('http://localhost:3000/api/user/stats', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Failed to fetch stats');
+      setStats(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      // First, refresh the cache
+      const refreshRes = await fetch('http://localhost:3000/api/user/refresh-cache', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      
+      if (!refreshRes.ok) {
+        throw new Error('Failed to refresh cache');
+      }
+
+      // Then fetch fresh stats
+      await fetchStats();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchStats = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const res = await fetch('http://localhost:3000/api/user/stats', {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Failed to fetch stats');
-        setStats(data);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
     if (token) fetchStats();
   }, [token]);
 
@@ -32,7 +58,18 @@ function Dashboard({ token }) {
     return <div className="text-center text-gray-300">Loading your stats...</div>;
   }
   if (error) {
-    return <div className="text-center text-red-400">{error}</div>;
+    return (
+      <div className="text-center text-red-400">
+        {error}
+        <button 
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="ml-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+        >
+          {refreshing ? 'Refreshing...' : 'Retry'}
+        </button>
+      </div>
+    );
   }
   if (!stats) {
     return <div className="text-center text-gray-400">No stats available.</div>;
@@ -129,9 +166,40 @@ function Dashboard({ token }) {
   const donutChartSeries = [totalSolved, Math.max(totalAvailable - totalSolved, 0)];
 
   return (
-    <div className="bg-gray-700 p-6 rounded-lg mt-4">
-      <h2 className="text-xl font-bold mb-6 text-center">Your Coding Stats</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+    <div className="bg-gray-700 p-6 rounded-lg">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-bold text-white">Your Stats Dashboard</h2>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          {refreshing ? 'Refreshing...' : '🔄 Refresh Data'}
+        </button>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="bg-gray-600 p-4 rounded-lg">
+          <h3 className="text-sm text-gray-300">LeetCode Total</h3>
+          <p className="text-2xl font-bold text-white">{stats.leetcodeTotalSolved || 0}</p>
+        </div>
+        <div className="bg-gray-600 p-4 rounded-lg">
+          <h3 className="text-sm text-gray-300">Codeforces Rating</h3>
+          <p className="text-2xl font-bold text-white">{stats.codeforcesRating || 'N/A'}</p>
+        </div>
+        <div className="bg-gray-600 p-4 rounded-lg">
+          <h3 className="text-sm text-gray-300">Max Rating</h3>
+          <p className="text-2xl font-bold text-white">{stats.codeforcesMaxRating || 'N/A'}</p>
+        </div>
+        <div className="bg-gray-600 p-4 rounded-lg">
+          <h3 className="text-sm text-gray-300">Rank</h3>
+          <p className="text-2xl font-bold text-white">{stats.codeforcesRank || 'N/A'}</p>
+        </div>
+      </div>
+
+      {/* Charts Grid */}
+      <div className="grid md:grid-cols-2 gap-6">
         {/* Solved Chart */}
         <div className="bg-gray-800 rounded-lg p-4 flex flex-col items-center">
           <h3 className="text-lg font-semibold mb-4 text-white">Problems Solved</h3>

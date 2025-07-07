@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const redis = require('redis');
 
 const app = express();
 
@@ -23,6 +24,18 @@ mongoose
     console.error("MongoDB Connection Error:", err.message);
     process.exit(1);
   });
+
+const redisClient = redis.createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379'
+});
+redisClient.connect().then(() => {
+  console.log('Redis connected');
+}).catch((err) => {
+  console.error('Redis connection error:', err);
+});
+
+// Export for use in routes
+module.exports.redisClient = redisClient;
 
 app.get("/api", (req, res) => res.send("Codyssey API Running"));
 

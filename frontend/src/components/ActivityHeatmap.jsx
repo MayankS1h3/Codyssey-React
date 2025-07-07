@@ -25,66 +25,34 @@ function ActivityHeatmap({ token, user }) {
     setLoading(true);
     setError('');
     try {
-      const { leetcodeUsername, codeforcesHandle } = user;
-      let leetcodeCalendar = {};
-      let codeforcesSubmissions = [];
+      // Use the new cached endpoint
+      const response = await fetch('http://localhost:3000/api/user/activity-data', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
 
-      // Fetch LeetCode submission calendar
-      if (leetcodeUsername) {
-        try {
-          const response = await fetch(`https://leetcode-stats-api.herokuapp.com/${leetcodeUsername}`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.submissionCalendar) {
-              leetcodeCalendar = data.submissionCalendar;
-            }
-          }
-        } catch (err) {
-          // Ignore, continue with Codeforces
-        }
+      if (!response.ok) {
+        throw new Error('Failed to fetch activity data');
       }
 
-      // Fetch Codeforces submissions
-      if (codeforcesHandle) {
-        try {
-          const response = await fetch(`https://codeforces.com/api/user.status?handle=${encodeURIComponent(codeforcesHandle)}&from=1&count=1000`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.status === 'OK' && data.result) {
-              codeforcesSubmissions = data.result;
-            }
-          }
-        } catch (err) {
-          // Ignore, continue with LeetCode
-        }
-      }
+      const data = await response.json();
+      
+      // Convert the activity data to the format expected by react-calendar-heatmap
+      const dataArr = data.activityData.map(item => ({
+        date: new Date(item.timestamp * 1000).toISOString().slice(0, 10),
+        count: item.count
+      }));
 
-      // Combine activity data
-      const activityMap = {};
-      // LeetCode
-      if (leetcodeCalendar && typeof leetcodeCalendar === 'object') {
-        for (const timestampStr in leetcodeCalendar) {
-          const dateStr = toDateString(Number(timestampStr));
-          activityMap[dateStr] = (activityMap[dateStr] || 0) + leetcodeCalendar[timestampStr];
-        }
-      }
-      // Codeforces
-      if (Array.isArray(codeforcesSubmissions)) {
-        codeforcesSubmissions.forEach((submission) => {
-          const dateStr = toDateString(submission.creationTimeSeconds);
-          activityMap[dateStr] = (activityMap[dateStr] || 0) + 1;
-        });
-      }
-      // Convert to array for react-calendar-heatmap
-      const dataArr = Object.entries(activityMap).map(([date, count]) => ({ date, count }));
       setHeatmapData(dataArr);
       setHasLoaded(true);
     } catch (err) {
       setError('Failed to load activity data');
+      console.error('Error fetching activity data:', err);
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, token]);
 
   // Toggle heatmap
   const handleToggleHeatmap = useCallback(() => {
@@ -94,9 +62,27 @@ function ActivityHeatmap({ token, user }) {
     setIsVisible(!isVisible);
   }, [isVisible, hasLoaded, fetchActivityData]);
 
-  const handleRefreshHeatmap = useCallback(() => {
-    fetchActivityData();
-  }, [fetchActivityData]);
+  const handleRefreshHeatmap = useCallback(async () => {
+    try {
+      // First refresh the cache
+      const refreshRes = await fetch('http://localhost:3000/api/user/refresh-cache', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (!refreshRes.ok) {
+        throw new Error('Failed to refresh cache');
+      }
+
+      // Then fetch fresh activity data
+      fetchActivityData();
+    } catch (err) {
+      setError('Failed to refresh activity data');
+      console.error('Error refreshing activity data:', err);
+    }
+  }, [fetchActivityData, token]);
 
   // Calculate start and end dates (last 1 month)
   const endDate = new Date();

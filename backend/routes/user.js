@@ -3,6 +3,8 @@ const router = express.Router();
 
 const auth = require("../middleware/auth");
 const User = require("../models/User");
+const { redisClient } = require('../server');
+
 router.post("/handles", auth, async (req, res) => {
   const { leetcodeUsername, codeforcesHandle } = req.body;
 
@@ -16,6 +18,12 @@ router.post("/handles", auth, async (req, res) => {
     user.codeforcesHandle = codeforcesHandle || user.codeforcesHandle;
 
     await user.save();
+
+    // Invalidate cache for this user
+    await redisClient.del(`userStats:${req.user.id}`);
+    await redisClient.del(`practiceProblems:${req.user.id}`);
+    await redisClient.del(`activityData:${req.user.id}`);
+
     res.json({
       message: "Handles updated successfully!",
       leetcodeUsername: user.leetcodeUsername,
@@ -28,7 +36,14 @@ router.post("/handles", auth, async (req, res) => {
 });
 
 router.get("/practice-problems", auth, async (req, res) => {
+  const cacheKey = `practiceProblems:${req.user.id}`;
   try {
+    // Try to get cached data
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
     const user = await User.findById(req.user.id).select(
       "leetcodeUsername codeforcesHandle"
     );
@@ -237,17 +252,22 @@ router.get("/practice-problems", auth, async (req, res) => {
       console.log(
         `[PracticeProblems] No problems selected. Total unique successful problems found: ${allSuccessfulProblems.length}`
       );
-      return res.json({
+      const response = {
         problems: [],
         message:
           "Could not find enough recent successful submissions to suggest problems. Try solving a few more!",
-      });
+      };
+      await redisClient.setEx(cacheKey, 300, JSON.stringify(response));
+      return res.json(response);
     }
 
-    res.json({
+    const response = {
       problems: practiceProblems,
       message: `Found ${practiceProblems.length} practice problems for you.`,
-    });
+    };
+    // Cache the response for 5 minutes
+    await redisClient.setEx(cacheKey, 300, JSON.stringify(response));
+    res.json(response);
   } catch (error) {
     console.error(
       "[PracticeProblems] Server error in /api/user/practice-problems:",
@@ -261,7 +281,14 @@ router.get("/practice-problems", auth, async (req, res) => {
 
 // GET /api/user/stats - Fetch LeetCode and Codeforces stats for the logged-in user
 router.get("/stats", auth, async (req, res) => {
+  const cacheKey = `userStats:${req.user.id}`;
   try {
+    // Try to get cached data
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
     const user = await User.findById(req.user.id).select("leetcodeUsername codeforcesHandle");
     if (!user) {
       return res.status(404).json({ message: "User not found." });
@@ -322,7 +349,7 @@ router.get("/stats", auth, async (req, res) => {
     }
 
     // Compose response
-    res.json({
+    const response = {
       leetcodeTotalSolved: leetcodeStats.totalSolved,
       leetcodeEasySolved: leetcodeStats.easySolved,
       leetcodeMediumSolved: leetcodeStats.mediumSolved,
@@ -333,10 +360,128 @@ router.get("/stats", auth, async (req, res) => {
       codeforcesRating: codeforcesStats.rating,
       codeforcesMaxRating: codeforcesStats.maxRating,
       codeforcesRank: codeforcesStats.rank,
-    });
+    };
+    // Cache the response for 5 minutes
+    await redisClient.setEx(cacheKey, 300, JSON.stringify(response));
+    res.json(response);
   } catch (error) {
     console.error("[Stats] Server error in /api/user/stats:", error.message);
     res.status(500).json({ message: "Server error while fetching stats." });
+  }
+});
+
+// GET /api/user/activity-data - Fetch and cache activity data for heatmap
+router.get("/activity-data", auth, async (req, res) => {
+  const cacheKey = `activityData:${req.user.id}`;
+  try {
+    // Try to get cached data
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
+    const user = await User.findById(req.user.id).select("leetcodeUsername codeforcesHandle");
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const { leetcodeUsername, codeforcesHandle } = user;
+    let leetcodeCalendar = {};
+    let codeforcesSubmissions = [];
+
+    // Fetch LeetCode submission calendar
+    if (leetcodeUsername) {
+      try {
+        const response = await fetch(`https://leetcode-stats-api.herokuapp.com/${leetcodeUsername}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.submissionCalendar) {
+            leetcodeCalendar = data.submissionCalendar;
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching LeetCode activity:", err.message);
+      }
+    }
+
+    // Fetch Codeforces submissions
+    if (codeforcesHandle) {
+      try {
+        const response = await fetch(`https://codeforces.com/api/user.status?handle=${encodeURIComponent(codeforcesHandle)}&from=1&count=1000`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.status === 'OK' && data.result) {
+            codeforcesSubmissions = data.result;
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching Codeforces activity:", err.message);
+      }
+    }
+
+    // Process and combine activity data
+    const activityMap = {};
+    
+    // Process LeetCode data
+    if (leetcodeCalendar && typeof leetcodeCalendar === 'object') {
+      for (const timestampStr in leetcodeCalendar) {
+        const timestamp = parseInt(timestampStr, 10);
+        if (!isNaN(timestamp)) {
+          activityMap[timestamp] = (activityMap[timestamp] || 0) + leetcodeCalendar[timestampStr];
+        }
+      }
+    }
+
+    // Process Codeforces data
+    if (Array.isArray(codeforcesSubmissions)) {
+      codeforcesSubmissions.forEach((submission) => {
+        const submissionTimestamp = submission.creationTimeSeconds;
+        const date = new Date(submissionTimestamp * 1000);
+        const year = date.getUTCFullYear();
+        const month = date.getUTCMonth();
+        const day = date.getUTCDate();
+        const dayStartTimestamp = Date.UTC(year, month, day) / 1000;
+        
+        activityMap[dayStartTimestamp] = (activityMap[dayStartTimestamp] || 0) + 1;
+      });
+    }
+
+    // Convert to array format for frontend
+    const activityArray = Object.entries(activityMap).map(([timestamp, count]) => ({
+      timestamp: parseInt(timestamp),
+      count: count
+    }));
+
+    const response = {
+      activityData: activityArray,
+      leetcodeCalendar: leetcodeCalendar,
+      codeforcesSubmissions: codeforcesSubmissions.length
+    };
+
+    // Cache the response for 10 minutes (activity data changes less frequently)
+    await redisClient.setEx(cacheKey, 600, JSON.stringify(response));
+    res.json(response);
+  } catch (error) {
+    console.error("[ActivityData] Server error:", error.message);
+    res.status(500).json({ message: "Server error while fetching activity data." });
+  }
+});
+
+// POST /api/user/refresh-cache - Manually refresh all cached data
+router.post("/refresh-cache", auth, async (req, res) => {
+  try {
+    // Delete all cached data for this user
+    await redisClient.del(`userStats:${req.user.id}`);
+    await redisClient.del(`practiceProblems:${req.user.id}`);
+    await redisClient.del(`activityData:${req.user.id}`);
+
+    res.json({ 
+      message: "Cache refreshed successfully. Next requests will fetch fresh data.",
+      refreshedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("[RefreshCache] Server error:", error.message);
+    res.status(500).json({ message: "Server error while refreshing cache." });
   }
 });
 

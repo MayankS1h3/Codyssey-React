@@ -1,0 +1,64 @@
+.heatmap-outer-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow-x: auto;
+  background: #181a1b;
+  border-radius: 8px;
+  padding: 8px 0;
+}
+
+.react-calendar-heatmap {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.react-calendar-heatmap .react-calendar-heatmap-week {
+  margin-bottom: 1px;
+  height: 10px;
+}
+
+.react-calendar-heatmap .react-calendar-heatmap-day {
+  width: 10px;
+  height: 10px;
+  margin: 1px;
+  rx: 2px;
+  stroke: none;
+  transition: fill 0.2s;
+}
+
+.heatmap-empty {
+  fill: #22272e !important; /* LeetCode/GitHub gray */
+}
+.heatmap-green-1 {
+  fill: #144620 !important; /* dark green */
+}
+.heatmap-green-2 {
+  fill: #166534 !important; /* medium green */
+}
+.heatmap-green-3 {
+  fill: #22c55e !important; /* light green */
+}
+.heatmap-green-4 {
+  fill: #4ade80 !important; /* lighter green */
+}
+
+.react-calendar-heatmap text {
+  font-size: 9px;
+  fill: #8b949e;
+}
+
+.react-calendar-heatmap .react-calendar-heatmap-weekday-label {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .react-calendar-heatmap .react-calendar-heatmap-day {
+    width: 7px;
+    height: 7px;
+  }
+  .react-calendar-heatmap .react-calendar-heatmap-week {
+    height: 7px;
+  }
+} 
